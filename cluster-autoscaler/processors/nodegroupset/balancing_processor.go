@@ -41,10 +41,16 @@ func (b *BalancingNodeGroupSetProcessor) FindSimilarNodeGroups(context *context.
 	nodeGroupId := nodeGroup.Id()
 	nodeInfo, found := nodeInfosForGroups[nodeGroupId]
 	if !found {
-		return []cloudprovider.NodeGroup{}, errors.NewAutoscalerError(
-			errors.InternalError,
-			"failed to find template node for node group %s",
-			nodeGroupId)
+		if context.BalanceIgnoreMissingExpansion {
+			// still show that something went wrong so users can see when the issue was resolved
+			klog.V(1).Infof("No info about pods passing predicates found for group %v, ignoring", nodeGroupId)
+			return result, nil
+		} else {
+			return []cloudprovider.NodeGroup{}, errors.NewAutoscalerError(
+				errors.InternalError,
+				"failed to find template node for node group %s",
+				nodeGroupId)
+		}
 	}
 	for _, ng := range context.CloudProvider.NodeGroups() {
 		ngId := ng.Id()
