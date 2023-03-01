@@ -167,6 +167,16 @@ func (r *RemovalSimulator) SimulateNodeRemoval(
 	}
 
 	err = r.withForkedSnapshot(func() error {
+		// try hard to not disrupt skew by only removing nodes that have pods that can be rescheduled without skew
+		for _, pod := range podsToRemove {
+			for i, _ := range pod.Spec.TopologySpreadConstraints {
+				c := pod.Spec.TopologySpreadConstraints[i]
+				if c.TopologyKey == "topology.kubernetes.io/zone" && c.WhenUnsatisfiable == "ScheduleAnyway" {
+					c.WhenUnsatisfiable = "DoNotSchedule"
+				}
+			}
+		}
+
 		return r.findPlaceFor(nodeName, podsToRemove, destinationMap, timestamp)
 	})
 	if err != nil {
