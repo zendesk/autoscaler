@@ -151,7 +151,8 @@ func (e *scaleUpExecutor) executeScaleUp(
 	if err := info.Group.IncreaseSize(increase); err != nil {
 		e.autoscalingContext.LogRecorder.Eventf(apiv1.EventTypeWarning, "FailedToScaleUpGroup", "Scale-up failed for group %s: %v", info.Group.Id(), err)
 		aerr := errors.ToAutoscalerError(errors.CloudProviderError, err).AddPrefix("failed to increase node group size: ")
-		e.clusterStateRegistry.RegisterFailedScaleUp(info.Group, metrics.FailedScaleUpReason(string(aerr.Type())), gpuResourceName, gpuType, now)
+		backoff := (strings.Contains(aerr.Error(), "Throttling: Rate exceeded"))
+		e.clusterStateRegistry.RegisterFailedScaleUp(info.Group, metrics.FailedScaleUpReason(string(aerr.Type())), gpuResourceName, gpuType, now, backoff)
 		return aerr
 	}
 	e.clusterStateRegistry.RegisterOrUpdateScaleUp(

@@ -276,7 +276,7 @@ func (csr *ClusterStateRegistry) updateScaleRequests(currentTime time.Time) {
 			} else {
 				gpuResource, gpuType = gpu.GetGpuInfoForMetrics(csr.cloudProvider.GetNodeGpuConfig(nodeInfo.Node()), availableGPUTypes, nodeInfo.Node(), scaleUpRequest.NodeGroup)
 			}
-			csr.registerFailedScaleUpNoLock(scaleUpRequest.NodeGroup, metrics.Timeout, cloudprovider.OtherErrorClass, "timeout", gpuResource, gpuType, currentTime)
+			csr.registerFailedScaleUpNoLock(scaleUpRequest.NodeGroup, metrics.Timeout, cloudprovider.OtherErrorClass, "timeout", gpuResource, gpuType, currentTime, true)
 			delete(csr.scaleUpRequests, nodeGroupName)
 		}
 	}
@@ -300,16 +300,18 @@ func (csr *ClusterStateRegistry) backoffNodeGroup(nodeGroup cloudprovider.NodeGr
 // RegisterFailedScaleUp should be called after getting error from cloudprovider
 // when trying to scale-up node group. It will mark this group as not safe to autoscale
 // for some time.
-func (csr *ClusterStateRegistry) RegisterFailedScaleUp(nodeGroup cloudprovider.NodeGroup, reason metrics.FailedScaleUpReason, gpuResourceName, gpuType string, currentTime time.Time) {
+func (csr *ClusterStateRegistry) RegisterFailedScaleUp(nodeGroup cloudprovider.NodeGroup, reason metrics.FailedScaleUpReason, gpuResourceName, gpuType string, currentTime time.Time, backoff bool) {
 	csr.Lock()
 	defer csr.Unlock()
-	csr.registerFailedScaleUpNoLock(nodeGroup, reason, cloudprovider.OtherErrorClass, string(reason), gpuResourceName, gpuType, currentTime)
+	csr.registerFailedScaleUpNoLock(nodeGroup, reason, cloudprovider.OtherErrorClass, string(reason), gpuResourceName, gpuType, currentTime, backoff)
 }
 
-func (csr *ClusterStateRegistry) registerFailedScaleUpNoLock(nodeGroup cloudprovider.NodeGroup, reason metrics.FailedScaleUpReason, errorClass cloudprovider.InstanceErrorClass, errorCode string, gpuResourceName, gpuType string, currentTime time.Time) {
+func (csr *ClusterStateRegistry) registerFailedScaleUpNoLock(nodeGroup cloudprovider.NodeGroup, reason metrics.FailedScaleUpReason, errorClass cloudprovider.InstanceErrorClass, errorCode string, gpuResourceName, gpuType string, currentTime time.Time, backoff bool) {
 	csr.scaleUpFailures[nodeGroup.Id()] = append(csr.scaleUpFailures[nodeGroup.Id()], ScaleUpFailure{NodeGroup: nodeGroup, Reason: reason, Time: currentTime})
 	metrics.RegisterFailedScaleUp(reason, gpuResourceName, gpuType)
-	csr.backoffNodeGroup(nodeGroup, errorClass, errorCode, currentTime)
+	if backoff {
+		csr.backoffNodeGroup(nodeGroup, errorClass, errorCode, currentTime)
+	}
 }
 
 // UpdateNodes updates the state of the nodes in the ClusterStateRegistry and recalculates the stats
@@ -1112,7 +1114,7 @@ func (csr *ClusterStateRegistry) handleInstanceCreationErrorsForNodeGroup(
 			}
 			// Decrease the scale up request by the number of deleted nodes
 			csr.registerOrUpdateScaleUpNoLock(nodeGroup, -len(unseenInstanceIds), currentTime)
-			csr.registerFailedScaleUpNoLock(nodeGroup, metrics.FailedScaleUpReason(errorCode.code), errorCode.class, errorCode.code, gpuResource, gpuType, currentTime)
+			csr.registerFailedScaleUpNoLock(nodeGroup, metrics.FailedScaleUpReason(errorCode.code), errorCode.class, errorCode.code, gpuResource, gpuType, currentTime, true)
 		}
 	}
 }
