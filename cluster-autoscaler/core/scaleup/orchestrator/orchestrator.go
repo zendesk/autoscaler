@@ -586,7 +586,8 @@ func (o *ScaleUpOrchestrator) executeScaleUp(
 	if err := info.Group.IncreaseSize(increase); err != nil {
 		o.autoscalingContext.LogRecorder.Eventf(apiv1.EventTypeWarning, "FailedToScaleUpGroup", "Scale-up failed for group %s: %v", info.Group.Id(), err)
 		aerr := errors.ToAutoscalerError(errors.CloudProviderError, err).AddPrefix("failed to increase node group size: ")
-		o.clusterStateRegistry.RegisterFailedScaleUp(info.Group, metrics.FailedScaleUpReason(string(aerr.Type())), now)
+		backoff := (strings.Contains(aerr.Error(), "Throttling: Rate exceeded"))
+		o.clusterStateRegistry.RegisterFailedScaleUp(info.Group, metrics.FailedScaleUpReason(string(aerr.Type())), now, backoff)
 		return aerr
 	}
 	o.clusterStateRegistry.RegisterOrUpdateScaleUp(
