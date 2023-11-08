@@ -147,7 +147,10 @@ func (o *ScaleUpOrchestrator) ScaleUp(
 
 	for _, nodeGroup := range validNodeGroups {
 		schedulablePods[nodeGroup.Id()] = o.SchedulablePods(podEquivalenceGroups, nodeGroup, nodeInfos[nodeGroup.Id()])
+		klog.V(1).Infof("DEBUG schedulable group %v in %v", len(schedulablePods[nodeGroup.Id()]), nodeGroup.Id())
 	}
+
+	klog.V(1).Infof("DEBUG schedulable pods %v - groups %v", len(unschedulablePods), len(schedulablePods))
 
 	for _, nodeGroup := range validNodeGroups {
 		option := o.ComputeExpansionOption(nodeGroup, schedulablePods, nodeInfos, len(nodes)+len(upcomingNodes), now)
