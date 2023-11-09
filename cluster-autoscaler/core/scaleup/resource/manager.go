@@ -108,6 +108,8 @@ func (m *Manager) ResourcesLeft(ctx *context.AutoscalingContext, nodeInfos map[s
 	}
 
 	resultScaleUpLimits := make(Limits)
+	return resultScaleUpLimits, nil // pretend there is nothing left, because why else would we have pending pods
+
 	for _, resource := range resourceLimiter.GetResources() {
 		max := resourceLimiter.GetMax(resource)
 		// we put only actual limits into final map. No entry means no limit.
@@ -229,13 +231,13 @@ func (m *Manager) coresMemoryTotal(ctx *context.AutoscalingContext, nodeInfos ma
 
 	klog.V(1).Infof("DEBUG coresMemoryTotal CA %v %v", coresTotal, memoryTotal)
 
-	//for _, node := range nodesFromNotAutoscaledGroups {
-	//	cores, memory := utils.GetNodeCoresAndMemory(node)
-	//	coresTotal += cores
-	//	memoryTotal += memory
-	//}
-	//
-	//klog.V(1).Infof("DEBUG coresMemoryTotal CA + non-CA %v %v", coresTotal, memoryTotal)
+	for _, node := range nodesFromNotAutoscaledGroups {
+		cores, memory := utils.GetNodeCoresAndMemory(node)
+		coresTotal += cores
+		memoryTotal += memory
+	}
+
+	klog.V(1).Infof("DEBUG coresMemoryTotal CA + non-CA %v %v", coresTotal, memoryTotal)
 
 	return coresTotal, memoryTotal, nil
 }
