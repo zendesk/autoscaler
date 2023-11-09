@@ -87,6 +87,9 @@ func (m *Manager) DeltaForNode(ctx *context.AutoscalingContext, nodeInfo *schedu
 // ResourcesLeft calculates the amount of resources left in the cluster.
 func (m *Manager) ResourcesLeft(ctx *context.AutoscalingContext, nodeInfos map[string]*schedulerframework.NodeInfo, nodes []*corev1.Node) (Limits, errors.AutoscalerError) {
 	nodesFromNotAutoscaledGroups, err := utils.FilterOutNodesFromNotAutoscaledGroups(nodes, ctx.CloudProvider)
+
+	klog.V(1).Infof("DEBUG ResourcesLeft non-CA nodes %v", len(nodesFromNotAutoscaledGroups))
+
 	if err != nil {
 		return nil, err.AddPrefix("failed to filter out nodes which are from not autoscaled groups: ")
 	}
@@ -224,11 +227,15 @@ func (m *Manager) coresMemoryTotal(ctx *context.AutoscalingContext, nodeInfos ma
 		}
 	}
 
+	klog.V(1).Infof("DEBUG coresMemoryTotal CA %v", coresTotal, memoryTotal)
+
 	for _, node := range nodesFromNotAutoscaledGroups {
 		cores, memory := utils.GetNodeCoresAndMemory(node)
 		coresTotal += cores
 		memoryTotal += memory
 	}
+
+	klog.V(1).Infof("DEBUG coresMemoryTotal CA + non-CA %v", coresTotal, memoryTotal)
 
 	return coresTotal, memoryTotal, nil
 }
