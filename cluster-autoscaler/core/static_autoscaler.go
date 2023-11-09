@@ -310,6 +310,7 @@ func (a *StaticAutoscaler) RunOnce(currentTime time.Time) caerrors.AutoscalerErr
 		return caerrors.ToAutoscalerError(caerrors.ApiCallError, err)
 	}
 	originalScheduledPods, unschedulablePods := kube_util.ScheduledPods(pods), kube_util.UnschedulablePods(pods)
+	klog.V(1).Infof("DEBUG unschedulable pods initial %v", len(unschedulablePods))
 
 	// Update cluster resource usage metrics
 	coresTotal, memoryTotal := calculateCoresMemoryTotal(allNodes, currentTime)
@@ -454,11 +455,13 @@ func (a *StaticAutoscaler) RunOnce(currentTime time.Time) caerrors.AutoscalerErr
 	metrics.UpdateUnschedulablePodsCount(len(unschedulablePods))
 
 	unschedulablePods = tpu.ClearTPURequests(unschedulablePods)
+	klog.V(1).Infof("DEBUG unschedulable pods with tpu %v", len(unschedulablePods))
 
 	// todo: move split and append below to separate PodListProcessor
 	// Some unschedulable pods can be waiting for lower priority pods preemption so they have nominated node to run.
 	// Such pods don't require scale up but should be considered during scale down.
 	unschedulablePods, unschedulableWaitingForLowerPriorityPreemption := core_utils.FilterOutExpendableAndSplit(unschedulablePods, allNodes, a.ExpendablePodsPriorityCutoff)
+	klog.V(1).Infof("DEBUG unschedulable pods with priority %v", len(unschedulablePods))
 
 	// modify the snapshot simulating scheduling of pods waiting for preemption.
 	// this is not strictly correct as we are not simulating preemption itself but it matches
@@ -516,9 +519,11 @@ func (a *StaticAutoscaler) RunOnce(currentTime time.Time) caerrors.AutoscalerErr
 	}
 
 	unschedulablePodsToHelp, _ := a.processors.PodListProcessor.Process(a.AutoscalingContext, unschedulablePods)
+	klog.V(1).Infof("DEBUG unschedulable pods to help %v", len(unschedulablePodsToHelp))
 
 	// finally, filter out pods that are too "young" to safely be considered for a scale-up (delay is configurable)
 	unschedulablePodsToHelp = a.filterOutYoungPods(unschedulablePodsToHelp, currentTime)
+	klog.V(1).Infof("DEBUG unschedulable pods to help and new %v", len(unschedulablePodsToHelp))
 
 	preScaleUp := func() time.Time {
 		scaleUpStart := time.Now()
