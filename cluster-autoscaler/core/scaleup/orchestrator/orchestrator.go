@@ -130,7 +130,7 @@ func (o *ScaleUpOrchestrator) ScaleUp(
 	if aErr != nil {
 		return scaleUpError(&status.ScaleUpStatus{}, aErr.AddPrefix("could not compute total resources: "))
 	}
-
+	klog.V(1).Infof("DEBUG ResourcesLeft total %v", resourcesLeft)
 	now := time.Now()
 
 	// Filter out invalid node groups

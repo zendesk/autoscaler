@@ -227,15 +227,15 @@ func (m *Manager) coresMemoryTotal(ctx *context.AutoscalingContext, nodeInfos ma
 		}
 	}
 
-	klog.V(1).Infof("DEBUG coresMemoryTotal CA %v", coresTotal, memoryTotal)
+	klog.V(1).Infof("DEBUG coresMemoryTotal CA %v %v", coresTotal, memoryTotal)
 
-	for _, node := range nodesFromNotAutoscaledGroups {
-		cores, memory := utils.GetNodeCoresAndMemory(node)
-		coresTotal += cores
-		memoryTotal += memory
-	}
-
-	klog.V(1).Infof("DEBUG coresMemoryTotal CA + non-CA %v", coresTotal, memoryTotal)
+	//for _, node := range nodesFromNotAutoscaledGroups {
+	//	cores, memory := utils.GetNodeCoresAndMemory(node)
+	//	coresTotal += cores
+	//	memoryTotal += memory
+	//}
+	//
+	//klog.V(1).Infof("DEBUG coresMemoryTotal CA + non-CA %v %v", coresTotal, memoryTotal)
 
 	return coresTotal, memoryTotal, nil
 }
