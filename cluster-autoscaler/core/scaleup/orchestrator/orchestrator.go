@@ -190,6 +190,20 @@ func (o *ScaleUpOrchestrator) ScaleUp(
 			ConsideredNodeGroups:    nodeGroups,
 		}, nil
 	}
+
+	// we assume all pods use DoNotSchedule az spread, so the "best" option will only ever be able to scale 1
+	// so add all nodes we need to bestOption, since balancing will distribute the nodes to all azs anyway
+	// (if the nodes are needed in exactly 1 az then we don't distribute)
+	if o.autoscalingContext.BalanceSimilarNodeGroups {
+		countWas := bestOption.NodeCount
+		for _, opt := range options {
+			if opt.NodeGroup != bestOption.NodeGroup {
+				bestOption.NodeCount += opt.NodeCount
+			}
+		}
+		klog.V(1).Infof("Best option node count adjustment: %v -> %v (saw %v options)", countWas, bestOption.NodeCount, len(options))
+	}
+
 	klog.V(1).Infof("Best option to resize: %s", bestOption.NodeGroup.Id())
 	if len(bestOption.Debug) > 0 {
 		klog.V(1).Info(bestOption.Debug)
