@@ -168,6 +168,8 @@ func (o *ScaleUpOrchestrator) ScaleUp(
 		}
 	}
 
+	klog.V(1).Infof("DEBUG skips: %v -- %v", skippedNodeGroups, len(expansionOptions))
+
 	if len(expansionOptions) == 0 {
 		klog.V(1).Info("No expansion options")
 		return &status.ScaleUpStatus{
