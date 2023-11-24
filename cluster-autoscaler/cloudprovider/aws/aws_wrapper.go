@@ -31,6 +31,7 @@ import (
 
 // autoScalingI is the interface abstracting specific API calls of the auto-scaling service provided by AWS SDK for use in CA
 type autoScalingI interface {
+	AttachInstances(input *autoscaling.AttachInstancesInput) (*autoscaling.AttachInstancesOutput, error)
 	DescribeAutoScalingGroupsPages(input *autoscaling.DescribeAutoScalingGroupsInput, fn func(*autoscaling.DescribeAutoScalingGroupsOutput, bool) bool) error
 	DescribeLaunchConfigurations(*autoscaling.DescribeLaunchConfigurationsInput) (*autoscaling.DescribeLaunchConfigurationsOutput, error)
 	DescribeScalingActivities(*autoscaling.DescribeScalingActivitiesInput) (*autoscaling.DescribeScalingActivitiesOutput, error)
@@ -40,6 +41,7 @@ type autoScalingI interface {
 
 // ec2I is the interface abstracting specific API calls of the EC2 service provided by AWS SDK for use in CA
 type ec2I interface {
+	CreateFleet(input *ec2.CreateFleetInput) (*ec2.CreateFleetOutput, error)
 	DescribeImages(input *ec2.DescribeImagesInput) (*ec2.DescribeImagesOutput, error)
 	DescribeLaunchTemplateVersions(input *ec2.DescribeLaunchTemplateVersionsInput) (*ec2.DescribeLaunchTemplateVersionsOutput, error)
 	GetInstanceTypesFromInstanceRequirementsPages(input *ec2.GetInstanceTypesFromInstanceRequirementsInput, fn func(*ec2.GetInstanceTypesFromInstanceRequirementsOutput, bool) bool) error

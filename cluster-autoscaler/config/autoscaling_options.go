@@ -219,6 +219,9 @@ type AutoscalingOptions struct {
 	BalancingLabels []string
 	// AWSUseStaticInstanceList tells if AWS cloud provider use static instance type list or dynamically fetch from remote APIs.
 	AWSUseStaticInstanceList bool
+	// AWSUseCreateFleetAndAttachAPI tells the AWS cloud provider to increase the size of ASGs by launching instances directly
+	// via the CreateFleet API and attach them to the ASG, instead of increasing the capacity to increase the speed of scale up.
+	AWSUseCreateFleetAndAttachAPI bool
 	// GCEOptions contain autoscaling options specific to GCE cloud provider.
 	GCEOptions GCEOptions
 	// Path to kube configuration if available
