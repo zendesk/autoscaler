@@ -53,15 +53,17 @@ var (
 
 // awsCloudProvider implements CloudProvider interface.
 type awsCloudProvider struct {
-	awsManager      *AwsManager
-	resourceLimiter *cloudprovider.ResourceLimiter
+	awsManager                 *AwsManager
+	resourceLimiter            *cloudprovider.ResourceLimiter
+	useCreateFleetAndAttachAPI bool
 }
 
 // BuildAwsCloudProvider builds CloudProvider implementation for AWS.
-func BuildAwsCloudProvider(awsManager *AwsManager, resourceLimiter *cloudprovider.ResourceLimiter) (cloudprovider.CloudProvider, error) {
+func BuildAwsCloudProvider(awsManager *AwsManager, resourceLimiter *cloudprovider.ResourceLimiter, useCreateFleetAndAttachAPI bool) (cloudprovider.CloudProvider, error) {
 	aws := &awsCloudProvider{
-		awsManager:      awsManager,
-		resourceLimiter: resourceLimiter,
+		awsManager:                 awsManager,
+		resourceLimiter:            resourceLimiter,
+		useCreateFleetAndAttachAPI: useCreateFleetAndAttachAPI,
 	}
 	return aws, nil
 }
@@ -99,8 +101,9 @@ func (aws *awsCloudProvider) NodeGroups() []cloudprovider.NodeGroup {
 	ngs := make([]cloudprovider.NodeGroup, 0, len(asgs))
 	for _, asg := range asgs {
 		ngs = append(ngs, &AwsNodeGroup{
-			asg:        asg,
-			awsManager: aws.awsManager,
+			asg:                        asg,
+			awsManager:                 aws.awsManager,
+			useCreateFleetAndAttachAPI: aws.useCreateFleetAndAttachAPI,
 		})
 	}
 
@@ -209,8 +212,9 @@ func AwsRefFromProviderId(id string) (*AwsInstanceRef, error) {
 
 // AwsNodeGroup implements NodeGroup interface.
 type AwsNodeGroup struct {
-	awsManager *AwsManager
-	asg        *asg
+	awsManager                 *AwsManager
+	asg                        *asg
+	useCreateFleetAndAttachAPI bool
 }
 
 // MaxSize returns maximum size of the node group.
@@ -269,7 +273,12 @@ func (ng *AwsNodeGroup) IncreaseSize(delta int) error {
 	if size+delta > ng.asg.maxSize {
 		return fmt.Errorf("size increase too large - desired:%d max:%d", size+delta, ng.asg.maxSize)
 	}
-	return ng.awsManager.SetAsgSize(ng.asg, size+delta)
+
+	if ng.useCreateFleetAndAttachAPI {
+		return ng.awsManager.LaunchAndAttach(ng.asg, delta)
+	} else {
+		return ng.awsManager.SetAsgSize(ng.asg, size+delta)
+	}
 }
 
 // DecreaseTargetSize decreases the target size of the node group. This function
@@ -447,7 +456,7 @@ func BuildAWS(opts config.AutoscalingOptions, do cloudprovider.NodeGroupDiscover
 		klog.Fatalf("Failed to create AWS Manager: %v", err)
 	}
 
-	provider, err := BuildAwsCloudProvider(manager, rl)
+	provider, err := BuildAwsCloudProvider(manager, rl, opts.AWSUseCreateFleetAndAttachAPI)
 	if err != nil {
 		klog.Fatalf("Failed to create AWS cloud provider: %v", err)
 	}

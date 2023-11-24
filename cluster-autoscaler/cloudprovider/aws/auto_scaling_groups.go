@@ -58,6 +58,7 @@ type launchTemplate struct {
 
 type mixedInstancesPolicy struct {
 	launchTemplate                *launchTemplate
+	launchTemplateOverrides       []*autoscaling.LaunchTemplateOverrides
 	instanceTypesOverrides        []string
 	instanceRequirementsOverrides *autoscaling.InstanceRequirements
 }
@@ -570,6 +571,7 @@ func (m *asgCache) buildAsgFromAWS(g *autoscaling.Group) (*asg, error) {
 
 		asg.MixedInstancesPolicy = &mixedInstancesPolicy{
 			launchTemplate:                buildLaunchTemplateFromSpec(g.MixedInstancesPolicy.LaunchTemplate.LaunchTemplateSpecification),
+			launchTemplateOverrides:       g.MixedInstancesPolicy.LaunchTemplate.Overrides,
 			instanceTypesOverrides:        getInstanceTypes(g.MixedInstancesPolicy.LaunchTemplate.Overrides),
 			instanceRequirementsOverrides: getInstanceTypeRequirements(g.MixedInstancesPolicy.LaunchTemplate.Overrides),
 		}

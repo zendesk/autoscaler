@@ -154,6 +154,128 @@ func (m *AwsManager) SetAsgSize(asg *asg, size int) error {
 	return m.asgCache.SetAsgSize(asg, size)
 }
 
+// LaunchAndAttach launches a fleet of instances and attaches them to the ASG
+func (m *AwsManager) LaunchAndAttach(asg *asg, size int) error {
+	// TODO: needs locking
+	// TODO: needs to inform asgCache to increment its size
+
+	capacityType := m.getCapacityType(asg)
+	tags := m.getInstanceTags(asg)
+	launchTemplateConfigs, err := m.getFleetLaunchTemplateConfigs(asg)
+	if err != nil {
+		return fmt.Errorf("getting launch template configs, %w", err)
+	}
+
+	params := &ec2.CreateFleetInput{
+		Type:                  aws.String(ec2.FleetTypeInstant),
+		LaunchTemplateConfigs: launchTemplateConfigs,
+		TargetCapacitySpecification: &ec2.TargetCapacitySpecificationRequest{
+			DefaultTargetCapacityType: aws.String(capacityType),
+			TotalTargetCapacity:       aws.Int64(int64(size)),
+		},
+		TagSpecifications: []*ec2.TagSpecification{
+			{ResourceType: aws.String(ec2.ResourceTypeInstance), Tags: tags},
+			{ResourceType: aws.String(ec2.ResourceTypeVolume), Tags: tags},
+			{ResourceType: aws.String(ec2.ResourceTypeFleet), Tags: tags},
+		},
+	}
+	fleetOutput, err := m.awsService.CreateFleet(params)
+	if err != nil {
+		return fmt.Errorf("creating fleet, %w", err)
+	}
+
+	var instanceIDs []*string
+	for _, instance := range fleetOutput.Instances {
+		instanceIDs = append(instanceIDs, instance.InstanceIds...)
+	}
+
+	if len(instanceIDs) > 0 {
+		params := &autoscaling.AttachInstancesInput{
+			InstanceIds:          instanceIDs,
+			AutoScalingGroupName: aws.String(asg.Name),
+		}
+		_, err := m.awsService.AttachInstances(params)
+		if err != nil {
+			return fmt.Errorf("attaching instances to ASG %q: %w", asg.Name, err)
+		}
+	}
+
+	failedLaunchCount := len(fleetOutput.Errors) - size
+	if failedLaunchCount > 0 {
+		klog.Warningf("failed to launch %d instances for %s via CreateFleet call - falling back to SetDesiredCapacity: %v",
+			failedLaunchCount, asg.Name, err)
+		return m.SetAsgSize(asg, asg.curSize+failedLaunchCount)
+	}
+}
+
+func (m *AwsManager) getInstanceTags(asg *asg) []*ec2.Tag {
+	tags := make([]*ec2.Tag, 0, len(asg.Tags))
+	for i := range asg.Tags {
+		if asg.Tags[i].PropagateAtLaunch != nil && *asg.Tags[i].PropagateAtLaunch {
+			tags = append(tags, &ec2.Tag{Key: asg.Tags[i].Key, Value: asg.Tags[i].Value})
+		}
+	}
+	return tags
+}
+
+func (m *AwsManager) getCapacityType(asg *asg) string {
+	// TODO: fetch from ASG
+
+	return ec2.DefaultTargetCapacityTypeOnDemand
+}
+
+func (m *AwsManager) getFleetLaunchTemplateConfigs(asg *asg) ([]*ec2.FleetLaunchTemplateConfigRequest, error) {
+	var launchTemplateConfigs []*ec2.FleetLaunchTemplateConfigRequest
+
+	var defaultLaunchTemplateSpecification *ec2.FleetLaunchTemplateSpecificationRequest = nil
+	if asg.LaunchTemplate != nil {
+		defaultLaunchTemplateSpecification = &ec2.FleetLaunchTemplateSpecificationRequest{
+			LaunchTemplateName: aws.String(asg.LaunchTemplate.name),
+			Version:            aws.String(asg.LaunchTemplate.version),
+		}
+	}
+
+	if asg.MixedInstancesPolicy != nil {
+		defaultLaunchTemplateSpecification = &ec2.FleetLaunchTemplateSpecificationRequest{
+			LaunchTemplateName: aws.String(asg.MixedInstancesPolicy.launchTemplate.name),
+			Version:            aws.String(asg.MixedInstancesPolicy.launchTemplate.version),
+		}
+
+		for i := range asg.MixedInstancesPolicy.launchTemplateOverrides {
+			lto := asg.MixedInstancesPolicy.launchTemplateOverrides[i]
+			launchTemplateSpecification := defaultLaunchTemplateSpecification
+			if lto.LaunchTemplateSpecification != nil {
+				launchTemplateSpecification = &ec2.FleetLaunchTemplateSpecificationRequest{
+					LaunchTemplateName: lto.LaunchTemplateSpecification.LaunchTemplateName,
+					Version:            lto.LaunchTemplateSpecification.Version,
+				}
+			}
+
+			launchTemplateConfigs = append(launchTemplateConfigs, &ec2.FleetLaunchTemplateConfigRequest{
+				LaunchTemplateSpecification: launchTemplateSpecification,
+				Overrides: []*ec2.FleetLaunchTemplateOverridesRequest{
+					{
+						InstanceType: lto.InstanceType,
+						// TODO: support weighted capacity and instance requirements
+					},
+				},
+			})
+		}
+	}
+
+	if len(launchTemplateConfigs) == 0 {
+		if defaultLaunchTemplateSpecification == nil {
+			return nil, fmt.Errorf("cannot find LaunchTemplate for ASG %q", asg.Name)
+		}
+
+		launchTemplateConfigs = append(launchTemplateConfigs, &ec2.FleetLaunchTemplateConfigRequest{
+			LaunchTemplateSpecification: defaultLaunchTemplateSpecification,
+		})
+	}
+
+	return launchTemplateConfigs, nil
+}
+
 // DeleteInstances deletes the given instances. All instances must be controlled by the same ASG.
 func (m *AwsManager) DeleteInstances(instances []*AwsInstanceRef) error {
 	if err := m.asgCache.DeleteInstances(instances); err != nil {
