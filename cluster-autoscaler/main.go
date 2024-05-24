@@ -556,6 +556,11 @@ func main() {
 
 	logsapi.AddFlags(loggingConfig, pflag.CommandLine)
 	featureGate.AddFlag(pflag.CommandLine)
+
+	leaderElection := defaultLeaderElectionConfiguration()
+	leaderElection.LeaderElect = true
+	options.BindLeaderElectionFlags(&leaderElection, pflag.CommandLine)
+
 	kube_flag.InitFlags()
 
 	if err := logsapi.ValidateAndApply(loggingConfig, featureGate); err != nil {
@@ -563,10 +568,6 @@ func main() {
 	}
 
 	logs.InitLogs()
-
-	leaderElection := defaultLeaderElectionConfiguration()
-	leaderElection.LeaderElect = true
-	options.BindLeaderElectionFlags(&leaderElection, pflag.CommandLine)
 
 	healthCheck := metrics.NewHealthCheck(*maxInactivityTimeFlag, *maxFailingTimeFlag)
 

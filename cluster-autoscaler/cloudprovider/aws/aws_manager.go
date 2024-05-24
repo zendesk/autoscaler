@@ -21,10 +21,12 @@ package aws
 import (
 	"errors"
 	"fmt"
+	"math"
 	"math/rand"
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	apiv1 "k8s.io/api/core/v1"
@@ -34,6 +36,7 @@ import (
 
 	"k8s.io/autoscaler/cluster-autoscaler/cloudprovider"
 	"k8s.io/autoscaler/cluster-autoscaler/cloudprovider/aws/aws-sdk-go/aws"
+	"k8s.io/autoscaler/cluster-autoscaler/cloudprovider/aws/aws-sdk-go/aws/awserr"
 	"k8s.io/autoscaler/cluster-autoscaler/cloudprovider/aws/aws-sdk-go/service/autoscaling"
 	"k8s.io/autoscaler/cluster-autoscaler/cloudprovider/aws/aws-sdk-go/service/ec2"
 	"k8s.io/autoscaler/cluster-autoscaler/cloudprovider/aws/aws-sdk-go/service/eks"
@@ -46,6 +49,7 @@ const (
 	operationPollInterval   = 100 * time.Millisecond
 	maxRecordsReturnedByAPI = 100
 	maxAsgNamesPerDescribe  = 100
+	maxAttachInstanceCount  = 20
 	refreshInterval         = 1 * time.Minute
 	autoDiscovererTypeASG   = "asg"
 	asgAutoDiscovererKeyTag = "tag"
@@ -159,24 +163,34 @@ func (m *AwsManager) LaunchAndAttach(asg *asg, size int) error {
 	// TODO: needs locking
 	// TODO: needs to inform asgCache to increment its size
 
-	capacityType := m.getCapacityType(asg)
+	spotCapacity, onDemandCapacity := m.calculateSpotCapacity(asg, size)
 	tags := m.getInstanceTags(asg)
 	launchTemplateConfigs, err := m.getFleetLaunchTemplateConfigs(asg)
 	if err != nil {
 		return fmt.Errorf("getting launch template configs, %w", err)
 	}
 
+	// Call Fleet API to immediately trigger EC2 instance launch
 	params := &ec2.CreateFleetInput{
 		Type:                  aws.String(ec2.FleetTypeInstant),
 		LaunchTemplateConfigs: launchTemplateConfigs,
 		TargetCapacitySpecification: &ec2.TargetCapacitySpecificationRequest{
-			DefaultTargetCapacityType: aws.String(capacityType),
+			OnDemandTargetCapacity:    aws.Int64(int64(onDemandCapacity)),
+			SpotTargetCapacity:        aws.Int64(int64(spotCapacity)),
 			TotalTargetCapacity:       aws.Int64(int64(size)),
+			DefaultTargetCapacityType: aws.String(ec2.DefaultTargetCapacityTypeOnDemand), // TODO: what should this default be, does it matter?
+			// TODO: support attribute-based instance type capacity selection
 		},
 		TagSpecifications: []*ec2.TagSpecification{
 			{ResourceType: aws.String(ec2.ResourceTypeInstance), Tags: tags},
 			{ResourceType: aws.String(ec2.ResourceTypeVolume), Tags: tags},
 			{ResourceType: aws.String(ec2.ResourceTypeFleet), Tags: tags},
+		},
+		SpotOptions: &ec2.SpotOptionsRequest{
+			AllocationStrategy: aws.String(asg.InstancesDistribution.spotAllocationStrategy),
+		},
+		OnDemandOptions: &ec2.OnDemandOptionsRequest{
+			AllocationStrategy: aws.String(asg.InstancesDistribution.onDemandAllocationStrategy),
 		},
 	}
 	fleetOutput, err := m.awsService.CreateFleet(params)
@@ -184,48 +198,105 @@ func (m *AwsManager) LaunchAndAttach(asg *asg, size int) error {
 		return fmt.Errorf("creating fleet, %w", err)
 	}
 
+	// extract created instance IDs
 	var instanceIDs []*string
 	for _, instance := range fleetOutput.Instances {
 		instanceIDs = append(instanceIDs, instance.InstanceIds...)
 	}
 
-	if len(instanceIDs) > 0 {
-		params := &autoscaling.AttachInstancesInput{
-			InstanceIds:          instanceIDs,
-			AutoScalingGroupName: aws.String(asg.Name),
+	// Attach the instances to the ASG in groups of 20
+	var wg sync.WaitGroup
+	var attachErrs []error
+	for i := 0; i < len(instanceIDs); i += maxAttachInstanceCount {
+		end := i + maxAttachInstanceCount
+		if end > len(instanceIDs) {
+			end = len(instanceIDs)
 		}
-		_, err := m.awsService.AttachInstances(params)
-		if err != nil {
-			return fmt.Errorf("attaching instances to ASG %q: %w", asg.Name, err)
-		}
-	}
+		wg.Add(1)
 
+		go func(instanceIDs []*string) {
+			defer wg.Done()
+
+			params := &autoscaling.AttachInstancesInput{
+				InstanceIds:          instanceIDs,
+				AutoScalingGroupName: aws.String(asg.Name),
+			}
+
+			// TODO: add a timeout to this loop
+			for {
+				_, err := m.awsService.AttachInstances(params)
+				if err != nil {
+					// retry on pending instances ValidationError
+					var aerr awserr.Error
+					if errors.As(err, &aerr) && aerr.Code() == "ValidationError" && strings.Contains(aerr.Message(), "pending") {
+						time.Sleep(operationPollInterval)
+						continue
+					}
+
+					// otherwise add to attachErrs which get raised at the end
+					attachErrs = append(attachErrs, err)
+				}
+				break
+			}
+
+		}(instanceIDs[i:end])
+	}
+	wg.Wait()
+
+	// Return any errors that occurred during instance attachment
+	// TODO: terminate instances that failed to attach and/or fail back to ASG SetDesiredCapacity
+	return fmt.Errorf("attaching instances to ASG %q: %+v", asg.Name, attachErrs)
+
+	// Calculate how many instances failed to launch, fallback to incrementing ASG's SetDesiredCapacity
 	failedLaunchCount := len(fleetOutput.Errors) - size
 	if failedLaunchCount > 0 {
-		klog.Warningf("failed to launch %d instances for %s via CreateFleet call - falling back to SetDesiredCapacity: %v",
-			failedLaunchCount, asg.Name, err)
+		klog.Warningf("failed to launch %d instances for %s via CreateFleet call - falling back to SetDesiredCapacity: %+v",
+			failedLaunchCount, asg.Name, fleetOutput.Errors)
 		return m.SetAsgSize(asg, asg.curSize+failedLaunchCount)
 	}
+
+	return nil
 }
 
 func (m *AwsManager) getInstanceTags(asg *asg) []*ec2.Tag {
 	tags := make([]*ec2.Tag, 0, len(asg.Tags))
 	for i := range asg.Tags {
 		if asg.Tags[i].PropagateAtLaunch != nil && *asg.Tags[i].PropagateAtLaunch {
-			tags = append(tags, &ec2.Tag{Key: asg.Tags[i].Key, Value: asg.Tags[i].Value})
+			key := asg.Tags[i].Key
+			if str := aws.StringValue(key); strings.HasPrefix(str, "aws:") {
+				key = aws.String(fmt.Sprintf("reserved:%s", str))
+			}
+			tags = append(tags, &ec2.Tag{Key: key, Value: asg.Tags[i].Value})
 		}
 	}
 	return tags
 }
 
-func (m *AwsManager) getCapacityType(asg *asg) string {
-	// TODO: fetch from ASG
-
-	return ec2.DefaultTargetCapacityTypeOnDemand
+func (m *AwsManager) calculateSpotCapacity(asg *asg, size int) (spotCapacity int, onDemandCapacity int) {
+	for size > 0 {
+		if asg.curSize < asg.InstancesDistribution.onDemandBaseCapacity {
+			onDemandCapacity++
+			size--
+		} else {
+			// TODO: should this consider the current ratio of spot/on-demand instances?
+			onDemand := int(math.Floor(float64(size) * float64(asg.InstancesDistribution.onDemandPercentageAboveBaseCapacity) / 100))
+			onDemandCapacity += onDemand
+			spotCapacity += size - onDemand
+			size = 0
+		}
+	}
+	return
 }
 
 func (m *AwsManager) getFleetLaunchTemplateConfigs(asg *asg) ([]*ec2.FleetLaunchTemplateConfigRequest, error) {
 	var launchTemplateConfigs []*ec2.FleetLaunchTemplateConfigRequest
+
+	subnetIDOverrides := make([]*ec2.FleetLaunchTemplateOverridesRequest, len(asg.SubnetIDs))
+	for i, subnetID := range asg.SubnetIDs {
+		subnetIDOverrides[i] = &ec2.FleetLaunchTemplateOverridesRequest{
+			SubnetId: aws.String(subnetID),
+		}
+	}
 
 	var defaultLaunchTemplateSpecification *ec2.FleetLaunchTemplateSpecificationRequest = nil
 	if asg.LaunchTemplate != nil {
@@ -251,14 +322,22 @@ func (m *AwsManager) getFleetLaunchTemplateConfigs(asg *asg) ([]*ec2.FleetLaunch
 				}
 			}
 
+			overrides := make([]*ec2.FleetLaunchTemplateOverridesRequest, len(subnetIDOverrides))
+			for i := range subnetIDOverrides {
+				overrides[i] = &ec2.FleetLaunchTemplateOverridesRequest{
+					SubnetId: subnetIDOverrides[i].SubnetId,
+
+					InstanceType: lto.InstanceType,
+					// TODO: support weighted capacity and instance requirements
+				}
+				if asg.InstancesDistribution.spotMaxPrice != "" {
+					overrides[i].MaxPrice = aws.String(asg.InstancesDistribution.spotMaxPrice)
+				}
+			}
+
 			launchTemplateConfigs = append(launchTemplateConfigs, &ec2.FleetLaunchTemplateConfigRequest{
 				LaunchTemplateSpecification: launchTemplateSpecification,
-				Overrides: []*ec2.FleetLaunchTemplateOverridesRequest{
-					{
-						InstanceType: lto.InstanceType,
-						// TODO: support weighted capacity and instance requirements
-					},
-				},
+				Overrides:                   overrides,
 			})
 		}
 	}
@@ -270,6 +349,7 @@ func (m *AwsManager) getFleetLaunchTemplateConfigs(asg *asg) ([]*ec2.FleetLaunch
 
 		launchTemplateConfigs = append(launchTemplateConfigs, &ec2.FleetLaunchTemplateConfigRequest{
 			LaunchTemplateSpecification: defaultLaunchTemplateSpecification,
+			Overrides:                   subnetIDOverrides,
 		})
 	}
 

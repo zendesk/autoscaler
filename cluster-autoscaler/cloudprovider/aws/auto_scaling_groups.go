@@ -63,6 +63,14 @@ type mixedInstancesPolicy struct {
 	instanceRequirementsOverrides *autoscaling.InstanceRequirements
 }
 
+type instancesDistribution struct {
+	onDemandAllocationStrategy          string
+	onDemandBaseCapacity                int
+	onDemandPercentageAboveBaseCapacity int
+	spotAllocationStrategy              string
+	spotMaxPrice                        string
+}
+
 type asg struct {
 	AwsRef
 
@@ -72,9 +80,11 @@ type asg struct {
 	lastUpdateTime time.Time
 
 	AvailabilityZones       []string
+	SubnetIDs               []string
 	LaunchConfigurationName string
 	LaunchTemplate          *launchTemplate
 	MixedInstancesPolicy    *mixedInstancesPolicy
+	InstancesDistribution   *instancesDistribution
 	Tags                    []*autoscaling.TagDescription
 }
 
@@ -543,6 +553,7 @@ func (m *asgCache) buildAsgFromAWS(g *autoscaling.Group) (*asg, error) {
 
 		curSize:                 int(aws.Int64Value(g.DesiredCapacity)),
 		AvailabilityZones:       aws.StringValueSlice(g.AvailabilityZones),
+		SubnetIDs:               strings.Split(aws.StringValue(g.VPCZoneIdentifier), ","),
 		LaunchConfigurationName: aws.StringValue(g.LaunchConfigurationName),
 		Tags:                    g.Tags,
 	}
@@ -578,6 +589,15 @@ func (m *asgCache) buildAsgFromAWS(g *autoscaling.Group) (*asg, error) {
 
 		if len(asg.MixedInstancesPolicy.instanceTypesOverrides) != 0 && asg.MixedInstancesPolicy.instanceRequirementsOverrides != nil {
 			return nil, fmt.Errorf("invalid setup of both instance type and instance requirements overrides configured")
+		}
+
+		asg.InstancesDistribution = &instancesDistribution{
+			onDemandAllocationStrategy:          aws.StringValue(g.MixedInstancesPolicy.InstancesDistribution.OnDemandAllocationStrategy),
+			onDemandBaseCapacity:                int(aws.Int64Value(g.MixedInstancesPolicy.InstancesDistribution.OnDemandBaseCapacity)),
+			onDemandPercentageAboveBaseCapacity: int(aws.Int64Value(g.MixedInstancesPolicy.InstancesDistribution.OnDemandPercentageAboveBaseCapacity)),
+			spotAllocationStrategy:              aws.StringValue(g.MixedInstancesPolicy.InstancesDistribution.SpotAllocationStrategy),
+			// TODO: support SpotInstancePools?
+			spotMaxPrice: aws.StringValue(g.MixedInstancesPolicy.InstancesDistribution.SpotMaxPrice),
 		}
 	}
 
