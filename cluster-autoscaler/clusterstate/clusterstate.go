@@ -305,7 +305,7 @@ func (csr *ClusterStateRegistry) updateScaleRequests(currentTime time.Time) {
 				ErrorClass:   cloudprovider.OtherErrorClass,
 				ErrorCode:    "timeout",
 				ErrorMessage: fmt.Sprintf("Scale-up timed out for node group %v after %v", nodeGroupName, currentTime.Sub(scaleUpRequest.Time)),
-			}, gpuResource, gpuType, currentTime)
+			}, gpuResource, gpuType, currentTime, true)
 			delete(csr.scaleUpRequests, nodeGroupName)
 		}
 	}
@@ -336,7 +336,7 @@ func (csr *ClusterStateRegistry) RegisterFailedScaleUp(nodeGroup cloudprovider.N
 		ErrorClass:   cloudprovider.OtherErrorClass,
 		ErrorCode:    string(reason),
 		ErrorMessage: errorMessage,
-	}, gpuResourceName, gpuType, currentTime)
+	}, gpuResourceName, gpuType, currentTime, true)
 }
 
 // RegisterFailedScaleDown records failed scale-down for a nodegroup.
@@ -344,10 +344,12 @@ func (csr *ClusterStateRegistry) RegisterFailedScaleUp(nodeGroup cloudprovider.N
 func (csr *ClusterStateRegistry) RegisterFailedScaleDown(_ cloudprovider.NodeGroup, _ string, _ time.Time) {
 }
 
-func (csr *ClusterStateRegistry) registerFailedScaleUpNoLock(nodeGroup cloudprovider.NodeGroup, reason metrics.FailedScaleUpReason, errorInfo cloudprovider.InstanceErrorInfo, gpuResourceName, gpuType string, currentTime time.Time) {
+func (csr *ClusterStateRegistry) registerFailedScaleUpNoLock(nodeGroup cloudprovider.NodeGroup, reason metrics.FailedScaleUpReason, errorInfo cloudprovider.InstanceErrorInfo, gpuResourceName, gpuType string, currentTime time.Time, backoff bool) {
 	csr.scaleUpFailures[nodeGroup.Id()] = append(csr.scaleUpFailures[nodeGroup.Id()], ScaleUpFailure{NodeGroup: nodeGroup, Reason: reason, Time: currentTime})
 	metrics.RegisterFailedScaleUp(reason, gpuResourceName, gpuType)
-	csr.backoffNodeGroup(nodeGroup, errorInfo, currentTime)
+	if backoff {
+		csr.backoffNodeGroup(nodeGroup, errorInfo, currentTime)
+	}
 }
 
 // UpdateNodes updates the state of the nodes in the ClusterStateRegistry and recalculates the stats
@@ -1181,7 +1183,7 @@ func (csr *ClusterStateRegistry) handleInstanceCreationErrorsForNodeGroup(
 				ErrorClass:   errorCode.class,
 				ErrorCode:    errorCode.code,
 				ErrorMessage: csr.buildErrorMessageEventString(currentUniqueErrorMessagesForErrorCode[errorCode]),
-			}, gpuResource, gpuType, currentTime)
+			}, gpuResource, gpuType, currentTime, errorCode.code != "timeout")
 		}
 	}
 }
