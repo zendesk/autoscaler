@@ -348,7 +348,9 @@ func (csr *ClusterStateRegistry) RegisterFailedScaleDown(_ cloudprovider.NodeGro
 func (csr *ClusterStateRegistry) registerFailedScaleUpNoLock(nodeGroup cloudprovider.NodeGroup, reason metrics.FailedScaleUpReason, errorInfo cloudprovider.InstanceErrorInfo, gpuResourceName, gpuType string, currentTime time.Time) {
 	csr.scaleUpFailures[nodeGroup.Id()] = append(csr.scaleUpFailures[nodeGroup.Id()], ScaleUpFailure{NodeGroup: nodeGroup, Reason: reason, Time: currentTime})
 	metrics.RegisterFailedScaleUp(reason, gpuResourceName, gpuType)
-	csr.backoffNodeGroup(nodeGroup, errorInfo, currentTime)
+	if !strings.Contains(errorInfo.ErrorMessage, "Throttling: Rate exceeded") {
+		csr.backoffNodeGroup(nodeGroup, errorInfo, currentTime)
+	}
 }
 
 // UpdateNodes updates the state of the nodes in the ClusterStateRegistry and recalculates the stats
