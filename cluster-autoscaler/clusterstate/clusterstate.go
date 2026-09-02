@@ -364,7 +364,7 @@ func (csr *ClusterStateRegistry) updateScaleRequests(currentTime time.Time) {
 				ErrorClass:   cloudprovider.OtherErrorClass,
 				ErrorCode:    string(metrics.Timeout),
 				ErrorMessage: fmt.Sprintf("Scale-up timed out for node group %v after %v", nodeGroupName, currentTime.Sub(scaleUpRequest.Time)),
-			}, currentTime)
+			}, currentTime, true)
 
 			// Attempt to revert the failed scale-up by decreasing target size.
 			// This prevents cloud providers from indefinitely retrying failed provisioning attempts.
@@ -407,9 +407,11 @@ func (csr *ClusterStateRegistry) backoffNodeGroup(nodeGroup cloudprovider.NodeGr
 // RegisterFailedScaleUp should be called after getting error from cloudprovider
 // when trying to scale-up node group. It will mark this group as not safe to autoscale
 // for some time.
-func (csr *ClusterStateRegistry) RegisterFailedScaleUp(nodeGroup cloudprovider.NodeGroup, delta int, errorInfo cloudprovider.InstanceErrorInfo, currentTime time.Time) {
+func (csr *ClusterStateRegistry) RegisterFailedScaleUp(nodeGroup cloudprovider.NodeGroup, delta int, errorInfo cloudprovider.InstanceErrorInfo, currentTime time.Time, backoff bool) {
 	csr.scaleUpFailures.RegisterFailedScaleUp(nodeGroup, delta, errorInfo, currentTime)
-	csr.backoffNodeGroup(nodeGroup, errorInfo, currentTime)
+	if backoff {
+		csr.backoffNodeGroup(nodeGroup, errorInfo, currentTime)
+	}
 }
 
 // RegisterFailedScaleDown records failed scale-down for a nodegroup.
@@ -1297,7 +1299,7 @@ func (csr *ClusterStateRegistry) handleInstanceCreationErrorsForNodeGroup(
 				ErrorClass:   errorCode.class,
 				ErrorCode:    errorCode.code,
 				ErrorMessage: csr.buildErrorMessageEventString(currentUniqueErrorMessagesForErrorCode[errorCode]),
-			}, currentTime)
+			}, currentTime, errorCode.code != "timeout") // don't backoff on AWS API throttle/timeout
 		}
 	}
 }

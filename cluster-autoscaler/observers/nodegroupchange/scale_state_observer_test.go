@@ -79,7 +79,7 @@ func TestRegisterFailedScaleUpDirectCall(t *testing.T) {
 	errorInfo := cloudprovider.InstanceErrorInfo{
 		ErrorCode: "OUT_OF_RESOURCES",
 	}
-	producer.RegisterFailedScaleUp(nodeGroup, 3, errorInfo, now)
+	producer.RegisterFailedScaleUp(nodeGroup, 3, errorInfo, now, true)
 
 	mockMetricsObj.AssertCalled(t, "RegisterFailedScaleUp", metrics.FailedScaleUpReason("OUT_OF_RESOURCES"), "nvidia.com/gpu", "nvidia-tesla-k80", "dra.net")
 	mockMetricsObj.AssertCalled(t, "RegisterFailedNodeCreations", metrics.FailedScaleUpReason("OUT_OF_RESOURCES"), 3)
@@ -109,7 +109,7 @@ func TestRegisterFailedScaleUpCallViaObserversList(t *testing.T) {
 	errorInfo := cloudprovider.InstanceErrorInfo{
 		ErrorCode: "TIMEOUT",
 	}
-	list.RegisterFailedScaleUp(nodeGroup, 5, errorInfo, now)
+	list.RegisterFailedScaleUp(nodeGroup, 5, errorInfo, now, true)
 
 	// Assertions
 	mockMetricsObj.AssertCalled(t, "RegisterFailedScaleUp", metrics.FailedScaleUpReason("TIMEOUT"), "", "", "")

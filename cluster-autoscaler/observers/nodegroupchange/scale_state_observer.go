@@ -38,8 +38,9 @@ type NodeGroupChangeObserver interface {
 	// RegisterScaleDowns records scale down for a nodegroup.
 	RegisterScaleDown(nodeGroup cloudprovider.NodeGroup, nodeName string, currentTime time.Time, expectedDeleteTime time.Time)
 	// RegisterFailedScaleUp records failed scale-up for a nodegroup.
-	// errorInfo is a wrapper containing the reason for failed scale-up and the actual error message
-	RegisterFailedScaleUp(nodeGroup cloudprovider.NodeGroup, delta int, errorInfo cloudprovider.InstanceErrorInfo, currentTime time.Time)
+	// errorInfo is a wrapper containing the reason for failed scale-up and the actual error message.
+	// backoff=false skips nodegroup backoff for transient errors (e.g. AWS API throttle/timeout).
+	RegisterFailedScaleUp(nodeGroup cloudprovider.NodeGroup, delta int, errorInfo cloudprovider.InstanceErrorInfo, currentTime time.Time, backoff bool)
 	// RegisterFailedScaleDown records failed scale-down for a nodegroup.
 	RegisterFailedScaleDown(nodeGroup cloudprovider.NodeGroup, reason string, currentTime time.Time)
 }
@@ -78,11 +79,11 @@ func (l *NodeGroupChangeObserversList) RegisterScaleDown(nodeGroup cloudprovider
 }
 
 // RegisterFailedScaleUp calls RegisterFailedScaleUp for each observer.
-func (l *NodeGroupChangeObserversList) RegisterFailedScaleUp(nodeGroup cloudprovider.NodeGroup, delta int, errorInfo cloudprovider.InstanceErrorInfo, currentTime time.Time) {
+func (l *NodeGroupChangeObserversList) RegisterFailedScaleUp(nodeGroup cloudprovider.NodeGroup, delta int, errorInfo cloudprovider.InstanceErrorInfo, currentTime time.Time, backoff bool) {
 	l.mutex.Lock()
 	defer l.mutex.Unlock()
 	for _, observer := range l.observers {
-		observer.RegisterFailedScaleUp(nodeGroup, delta, errorInfo, currentTime)
+		observer.RegisterFailedScaleUp(nodeGroup, delta, errorInfo, currentTime, backoff)
 	}
 }
 
@@ -124,7 +125,7 @@ func (p *NodeGroupChangeMetricsProducer) RegisterScaleDown(nodeGroup cloudprovid
 }
 
 // RegisterFailedScaleUp emits the failed scale up metric.
-func (p *NodeGroupChangeMetricsProducer) RegisterFailedScaleUp(nodeGroup cloudprovider.NodeGroup, delta int, errorInfo cloudprovider.InstanceErrorInfo, currentTime time.Time) {
+func (p *NodeGroupChangeMetricsProducer) RegisterFailedScaleUp(nodeGroup cloudprovider.NodeGroup, delta int, errorInfo cloudprovider.InstanceErrorInfo, currentTime time.Time, _ bool) {
 	availableGPUTypes := p.cloudProvider.GetAvailableGPUTypes()
 	gpuResourceName, gpuType, draDriverNames := "", "", ""
 	nodeInfo, err := nodeGroup.TemplateNodeInfo()

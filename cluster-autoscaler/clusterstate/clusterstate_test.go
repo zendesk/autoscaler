@@ -1202,13 +1202,13 @@ func TestScaleUpFailures(t *testing.T) {
 
 	clusterstate := newTestClusterStateRegistry(provider, fakeLogRecorder, WithScaleUpFailuresRegistry(scaleUpFailuresRegistry), withMetrics(mockMetrics, provider))
 
-	clusterstate.scaleStateNotifier.RegisterFailedScaleUp(provider.GetNodeGroup("ng1"), 3, cloudprovider.InstanceErrorInfo{ErrorCode: string(metrics.Timeout)}, now)
+	clusterstate.scaleStateNotifier.RegisterFailedScaleUp(provider.GetNodeGroup("ng1"), 3, cloudprovider.InstanceErrorInfo{ErrorCode: string(metrics.Timeout)}, now, true)
 	mockMetrics.AssertCalled(t, "RegisterFailedScaleUp", metrics.Timeout, "", "", "")
 	mockMetrics.AssertCalled(t, "RegisterFailedNodeCreations", metrics.Timeout, 3)
-	clusterstate.scaleStateNotifier.RegisterFailedScaleUp(provider.GetNodeGroup("ng2"), 2, cloudprovider.InstanceErrorInfo{ErrorCode: string(metrics.Timeout)}, now)
+	clusterstate.scaleStateNotifier.RegisterFailedScaleUp(provider.GetNodeGroup("ng2"), 2, cloudprovider.InstanceErrorInfo{ErrorCode: string(metrics.Timeout)}, now, true)
 	mockMetrics.AssertCalled(t, "RegisterFailedScaleUp", metrics.Timeout, "", "", "")
 	mockMetrics.AssertCalled(t, "RegisterFailedNodeCreations", metrics.Timeout, 2)
-	clusterstate.scaleStateNotifier.RegisterFailedScaleUp(provider.GetNodeGroup("ng1"), 1, cloudprovider.InstanceErrorInfo{ErrorCode: string(metrics.APIError)}, now.Add(time.Minute))
+	clusterstate.scaleStateNotifier.RegisterFailedScaleUp(provider.GetNodeGroup("ng1"), 1, cloudprovider.InstanceErrorInfo{ErrorCode: string(metrics.APIError)}, now.Add(time.Minute), true)
 	mockMetrics.AssertCalled(t, "RegisterFailedScaleUp", metrics.APIError, "", "", "")
 	mockMetrics.AssertCalled(t, "RegisterFailedNodeCreations", metrics.APIError, 1)
 
@@ -1762,6 +1762,51 @@ func TestHandleInstanceCreationErrors(t *testing.T) {
 	assert.NoError(t, err)
 	mockMetrics.AssertCalled(t, "RegisterFailedScaleUp", metrics.FailedScaleUpReason("RESOURCE_POOL_EXHAUSTED"), "", "", "")
 	mockMetrics.AssertCalled(t, "RegisterFailedNodeCreations", metrics.FailedScaleUpReason("RESOURCE_POOL_EXHAUSTED"), 2)
+}
+
+// TestHandleInstanceCreationErrorsNoBackoffOnTimeout verifies the ported timeout patch:
+// an AWS API throttle/timeout (errorCode "timeout") at the instance-creation site
+// must not backoff the nodegroup, so scaling keeps going.
+func TestHandleInstanceCreationErrorsNoBackoffOnTimeout(t *testing.T) {
+	now := time.Now()
+
+	provider := testprovider.NewTestCloudProviderBuilder().Build()
+	mockedNodeGroup := &mockprovider.NodeGroup{}
+	mockedNodeGroup.On("Id").Return("ng1")
+	mockedNodeGroup.On("Nodes").Return([]cloudprovider.Instance{
+		{
+			Id: "instance1",
+			Status: &cloudprovider.InstanceStatus{
+				State: cloudprovider.InstanceCreating,
+				ErrorInfo: &cloudprovider.InstanceErrorInfo{
+					ErrorClass:   cloudprovider.OtherErrorClass,
+					ErrorCode:    "timeout",
+					ErrorMessage: "aws api throttled",
+				},
+			},
+		},
+	}, nil)
+	mockedNodeGroup.On("Autoprovisioned").Return(false)
+	mockedNodeGroup.On("TargetSize").Return(1, nil)
+	node := BuildTestNode("ng1_1", 1000, 1000)
+	mockedNodeGroup.On("TemplateNodeInfo").Return(framework.NewTestNodeInfo(node), nil)
+	mockedNodeGroup.On("GetOptions", mock.Anything).Return(&config.NodeGroupAutoscalingOptions{}, nil)
+	provider.InsertNodeGroup(mockedNodeGroup)
+
+	fakeClient := &fake.Clientset{}
+	fakeLogRecorder, _ := utils.NewStatusMapRecorder(fakeClient, "kube-system", kube_record.NewFakeRecorder(5), false, "my-cool-configmap")
+	mockMetrics := &mockMetrics{}
+	mockMetrics.On("RegisterFailedScaleUp", mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return()
+	mockMetrics.On("RegisterFailedNodeCreations", mock.Anything, mock.Anything).Return()
+	clusterstate := newTestClusterStateRegistry(provider, fakeLogRecorder, withMetrics(mockMetrics, provider))
+	clusterstate.RegisterScaleUp(mockedNodeGroup, 1, now)
+
+	// UpdateNodes triggers handleInstanceCreationErrors; a "timeout" (AWS API throttle) must not backoff the nodegroup.
+	err := clusterstate.UpdateNodes([]*apiv1.Node{}, now)
+	assert.NoError(t, err)
+	mockMetrics.AssertCalled(t, "RegisterFailedScaleUp", metrics.FailedScaleUpReason("timeout"), "", "", "")
+	mockMetrics.AssertCalled(t, "RegisterFailedNodeCreations", metrics.FailedScaleUpReason("timeout"), 1)
+	assert.Equal(t, backoff.Status{IsBackedOff: false}, clusterstate.backoff.BackoffStatus(mockedNodeGroup, nil, now))
 }
 
 func TestFailedScaleUpWithDra(t *testing.T) {

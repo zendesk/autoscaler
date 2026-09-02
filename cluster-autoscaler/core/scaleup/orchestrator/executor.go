@@ -174,7 +174,7 @@ func (e *scaleUpExecutor) executeScaleUp(
 			ErrorClass:   cloudprovider.OtherErrorClass,
 			ErrorCode:    string(aerr.Type()),
 			ErrorMessage: aerr.Error(),
-		}, now)
+		}, now, true)
 		return aerr
 	}
 	if increase < 0 {
