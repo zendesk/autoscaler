@@ -21,7 +21,8 @@ set -o pipefail
 echo "verify-kubelint"
 
 echo "installing dependencies"
-go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest
+# Pin below @latest: v2.14.0+ requires Go 1.26 while CI uses Go 1.25 (GOTOOLCHAIN=local).
+go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.13.2
 
 cd $(dirname "${BASH_SOURCE}")/..
 SCRIPT_ROOT="$PWD"
